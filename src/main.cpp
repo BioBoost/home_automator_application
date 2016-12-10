@@ -66,7 +66,7 @@ void create_services(HomeAutomator::Communicator * communicator, SimpleTaskSched
 
     std::vector<HomeAutomator::ServiceConfigData *> serviceConfig = config->get_service_configs();
     for (int i = 0; i < serviceConfig.size(); i++) {
-      SimplyLog::Log::i("Creating service with id = %d, type = %s, #params: %d\r\n", serviceConfig[i]->id, serviceConfig[i]->type, serviceConfig[i]->params.size());
+      SimplyLog::Log::i("Creating service with id = %d, type = %s, #params: %d\r\n", serviceConfig[i]->id, serviceConfig[i]->type.c_str(), serviceConfig[i]->params.size());
       HomeAutomator::EndPoint * service = HomeAutomator::ClientFactory::create(serviceConfig[i], communicator);
       if (service) {
         communicator->register_end_point(service);
@@ -91,7 +91,7 @@ void create_controls(HomeAutomator::Communicator * communicator, SimpleTaskSched
 
     std::vector<HomeAutomator::ControlConfigData *> controlConfig = config->get_control_configs();
     for (int i = 0; i < controlConfig.size(); i++) {
-      SimplyLog::Log::i("Creating control with id = %d, type = %s, #params: %d\r\n", controlConfig[i]->id, controlConfig[i]->type, controlConfig[i]->params.size());
+      SimplyLog::Log::i("Creating control with id = %d, type = %s, #params: %d\r\n", controlConfig[i]->id, controlConfig[i]->type.c_str(), controlConfig[i]->params.size());
       HomeAutomator::EndPoint * control = HomeAutomator::ControlFactory::create(controlConfig[i], communicator);
       if (control) {
         communicator->register_end_point(control);
@@ -115,15 +115,15 @@ void create_networks(HomeAutomator::Router * router, SimpleTaskScheduler::TaskSc
 
   std::vector<HomeAutomator::NetworkConfigData *> networkConfigs = config->get_network_configs();
   for (int i = 0; i < networkConfigs.size(); i++) {
-    SimplyLog::Log::i("Creating network of type %s with parent address = %d\r\n", networkConfigs[i]->type, networkConfigs[i]->parentAddress);
+    SimplyLog::Log::i("Creating network of type %s with parent address = %d\r\n", networkConfigs[i]->type.c_str(), networkConfigs[i]->parentAddress);
 
     HomeAutomator::Network * network = HomeAutomator::NetworkFactory::create(networkConfigs[i], router);
 
     if (!network) {
-      SimplyLog::Log::e("Could not create %s network\r\n", networkConfigs[i]->type);
+      SimplyLog::Log::e("Could not create %s network\r\n", networkConfigs[i]->type.c_str());
     } else {
       router->attach_network(network);
-      SimplyLog::Log::d("%s network succesfully attached\r\n", networkConfigs[i]->type);
+      SimplyLog::Log::d("%s network succesfully attached\r\n", networkConfigs[i]->type.c_str());
 
       // We need to create a task to do this as this should be done after
       // the network is fully set up. By retrying periodically we also
@@ -172,9 +172,9 @@ int main() {
 
   deviceConfig->load();
 
-  SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id());
-  SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description());
-  SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type());
+  SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id().c_str());
+  SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description().c_str());
+  SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type().c_str());
   SimplyLog::Log::i("Address: %d\r\n", deviceConfig->get_address());
 
   SimplyLog::Log::d("Creating router with address = %d\r\n", deviceConfig->get_address());
@@ -203,12 +203,12 @@ int main() {
         } else if (x == 'r') {
             mbed_reset();
         } else if (x == 's') {
-          SimplyLog::Log::i("Network stats:\r\n%s", router.get_stats());
-          SimplyLog::Log::i("Network status:\r\n%s\r\n", router.to_string());
+          SimplyLog::Log::i("Network stats:\r\n%s", router.get_stats().c_str());
+          SimplyLog::Log::i("Network status:\r\n%s\r\n", router.to_string().c_str());
         } else if (x == 'c') {
-          SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id());
-          SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description());
-          SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type());
+          SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id().c_str());
+          SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description().c_str());
+          SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type().c_str());
           SimplyLog::Log::i("Address: %d\r\n", deviceConfig->get_address());
         }
     }
