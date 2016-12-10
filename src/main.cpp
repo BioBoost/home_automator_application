@@ -6,7 +6,9 @@
 #include "device_configuration.h"
 #include "json_device_configuration_parser.h"
 
-DigitalOut myled(LED1);
+#include "task_scheduler.h"
+#include "alive.h"
+
 Serial pc(USBTX, USBRX);
 LogIt logger(&pc);
 
@@ -23,17 +25,21 @@ void load_device_config(void) {
 }
 
 int main() {
-    pc.baud(115200);
+  pc.baud(115200);
 
-    logger.setLevel(Log::LoggerInterface::DEBUG);
-    logger.info("Booting ....");
+  logger.setLevel(Log::LoggerInterface::DEBUG);
+  logger.info("Booting ....");
 
-    load_device_config();
+  load_device_config();
 
-    while(1) {
-        myled = 1;
-        wait(0.2);
-        myled = 0;
-        wait(0.2);
-    }
+  logger.debug("Creating task scheduler");
+  SimpleTaskScheduler::TaskScheduler scheduler;
+
+  logger.debug("Creating periodic alive task");
+  Alive alive(LED1);
+  scheduler.create_periodic_task(&alive, &Alive::indicate_living, 0.5);
+
+  while(1) {
+    scheduler.update();
+  }
 }
