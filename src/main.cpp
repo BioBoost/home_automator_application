@@ -9,6 +9,8 @@
 #include "task_scheduler.h"
 #include "alive.h"
 
+extern "C" void mbed_reset();
+
 Serial pc(USBTX, USBRX);
 LogIt logger(&pc);
 
@@ -40,6 +42,19 @@ int main() {
   scheduler.create_periodic_task(&alive, &Alive::indicate_living, 0.5);
 
   while(1) {
+    // [TODO] Refactor:
+    // This should later be refactored to a task
+    if (pc.readable()) {
+        char x = pc.getc();
+
+        if (x == 'h') {
+          logger.info("Press h for help");
+          logger.info("Press r for reset");
+        } else if (x == 'r') {
+            mbed_reset();
+        }
+    }
+
     scheduler.update();
   }
 }
