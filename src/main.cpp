@@ -1,10 +1,14 @@
 #include "mbed.h"
-#include "LogIt.h"
+#include "serial_logger.h"
 #include "LoggerInterface.h"
 
-// #include "file_reader.h"
-// #include "device_configuration.h"
-// #include "json_device_configuration_parser.h"
+#include "file_reader.h"
+
+#include "device_configuration.h"
+#include "json_device_configuration_parser.h"
+
+#include "control_list_configuration.h"
+#include "json_control_list_configuration_parser.h"
 
 #include "task_scheduler.h"
 #include "alive.h"
@@ -30,23 +34,12 @@
 #include "communicator.h"
 
 extern "C" void mbed_reset();
+extern int FreeMem();
 
 Serial pc(USBTX, USBRX);
-LogIt logger(&pc);
+LogIt::SerialLogger logger(&pc);
 
 std::vector<HomeAutomator::EndPoint *> endPoints;
-
-// void load_device_config(void) {
-//   ConfigParser::FileReader reader("/local/basic.jsn");
-//   JsonDeviceConfigurationParser parser(&reader);
-//   DeviceConfiguration *devConfig = parser.parse();
-//
-//   logger.info("Firmware version = %s", devConfig->version.c_str());
-//   logger.debug("Description = %s", devConfig->description.c_str());
-//   logger.debug("Board = %s", devConfig->board.c_str());
-//
-//   delete devConfig;
-// }
 
 class NetworkJoin {
   private: HomeAutomator::Network * network;
@@ -59,19 +52,19 @@ void create_services(HomeAutomator::Communicator * communicator, SimpleTaskSched
 
     HomeAutomator::ServiceConfiguration * config = new HomeAutomator::ServiceConfiguration();
     if (!config) {
-      SimplyLog::Log::e("Could not create ServiceConfiguration memory full\r\n");
+      logger.error("Could not create ServiceConfiguration memory full");
       return;
     }
     config->load();
 
     std::vector<HomeAutomator::ServiceConfigData *> serviceConfig = config->get_service_configs();
     for (int i = 0; i < serviceConfig.size(); i++) {
-      SimplyLog::Log::i("Creating service with id = %d, type = %s, #params: %d\r\n", serviceConfig[i]->id, serviceConfig[i]->type.c_str(), serviceConfig[i]->params.size());
-      HomeAutomator::EndPoint * service = HomeAutomator::ClientFactory::create(serviceConfig[i], communicator);
+      logger.info("Creating service with id = %d, type = %s, #params: %d", serviceConfig[i]->id, serviceConfig[i]->type.c_str(), serviceConfig[i]->params.size());
+      HomeAutomator::EndPoint * service = HomeAutomator::ClientFactory::create(serviceConfig[i], communicator, &logger);
       if (service) {
         communicator->register_end_point(service);
         if (service->does_it_require_periodic_update()) {
-          SimplyLog::Log::i("Creating scheduled update task (%f s) for service with id %d\r\n", service->get_periodic_update_time(), serviceConfig[i]->id);
+          logger.info("Creating scheduled update task (%f s) for service with id %d", service->get_periodic_update_time(), serviceConfig[i]->id);
           scheduler->create_periodic_task(service, &HomeAutomator::EndPoint::update, service->get_periodic_update_time());
         }
       }
@@ -82,55 +75,57 @@ void create_services(HomeAutomator::Communicator * communicator, SimpleTaskSched
 void create_controls(HomeAutomator::Communicator * communicator, SimpleTaskScheduler::TaskScheduler * scheduler) {
     // TODO [DUPLICATION A1A]
 
-    HomeAutomator::ControlConfiguration * config = new HomeAutomator::ControlConfiguration();
-    if (!config) {
-      SimplyLog::Log::e("Could not create ControlConfiguration memory full\r\n");
+    logger.debug("Loading control configs ...");
+    ConfigParser::FileReader reader("/local/controls.jsn");
+    HomeAutomator::JsonControlListConfigurationParser parser(&reader);
+    HomeAutomator::ControlListConfiguration *controlConfigs = parser.parse();
+
+    if (!controlConfigs) {
+      logger.error("Could not create controlConfigs, memory full");
       return;
     }
-    config->load();
 
-    std::vector<HomeAutomator::ControlConfigData *> controlConfig = config->get_control_configs();
-    for (int i = 0; i < controlConfig.size(); i++) {
-      SimplyLog::Log::i("Creating control with id = %d, type = %s, #params: %d\r\n", controlConfig[i]->id, controlConfig[i]->type.c_str(), controlConfig[i]->params.size());
-      HomeAutomator::EndPoint * control = HomeAutomator::ControlFactory::create(controlConfig[i], communicator);
+    for (int i = 0; i < controlConfigs->controls.size(); i++) {
+      logger.info("Creating control with id = %d, type = %s, #params: %d", controlConfigs->controls[i]->id, controlConfigs->controls[i]->type.c_str(), controlConfigs->controls[i]->params.size());
+      HomeAutomator::EndPoint * control = HomeAutomator::ControlFactory::create(controlConfigs->controls[i], communicator, &logger);
       if (control) {
         communicator->register_end_point(control);
         if (control->does_it_require_periodic_update()) {
-          SimplyLog::Log::i("Creating scheduled update task (%f s) for control with id %d\r\n", control->get_periodic_update_time(), controlConfig[i]->id);
+          logger.info("Creating scheduled update task (%f s) for control with id %d", control->get_periodic_update_time(), controlConfigs->controls[i]->id);
           scheduler->create_periodic_task(control, &HomeAutomator::EndPoint::update, control->get_periodic_update_time());
         }
         endPoints.push_back(control);   // This is just for sending command through terminal, will disappear later
       }
     }
-    delete config;
+    delete controlConfigs;
 }
 
 void create_networks(HomeAutomator::Router * router, SimpleTaskScheduler::TaskScheduler * scheduler) {
   HomeAutomator::NetworkConfiguration * config = new HomeAutomator::NetworkConfiguration();
   if (!config) {
-    SimplyLog::Log::e("Could not create NetworkConfiguration memory full\r\n");
+    logger.error("Could not create NetworkConfiguration memory full");
     return;
   }
   config->load();
 
   std::vector<HomeAutomator::NetworkConfigData *> networkConfigs = config->get_network_configs();
   for (int i = 0; i < networkConfigs.size(); i++) {
-    SimplyLog::Log::i("Creating network of type %s with parent address = %d\r\n", networkConfigs[i]->type.c_str(), networkConfigs[i]->parentAddress);
+    logger.info("Creating network of type %s with parent address = %d", networkConfigs[i]->type.c_str(), networkConfigs[i]->parentAddress);
 
-    HomeAutomator::Network * network = HomeAutomator::NetworkFactory::create(networkConfigs[i], router);
+    HomeAutomator::Network * network = HomeAutomator::NetworkFactory::create(networkConfigs[i], router, &logger);
 
     if (!network) {
-      SimplyLog::Log::e("Could not create %s network\r\n", networkConfigs[i]->type.c_str());
+      logger.error("Could not create %s network", networkConfigs[i]->type.c_str());
     } else {
       router->attach_network(network);
-      SimplyLog::Log::d("%s network succesfully attached\r\n", networkConfigs[i]->type.c_str());
+      logger.debug("%s network succesfully attached", networkConfigs[i]->type.c_str());
 
       // We need to create a task to do this as this should be done after
       // the network is fully set up. By retrying periodically we also
       // create simple retry mechanism.
       // TODO We should add these to a list so we can delete them later
       if (networkConfigs[i]->parentAddress != -1) {
-        SimplyLog::Log::i("Creating periodic join request task\r\n");
+        logger.info("Creating periodic join request task");
         NetworkJoin * netJoin = new NetworkJoin(network);
         scheduler->create_periodic_task(netJoin, &NetworkJoin::request_network_join, 20);
       }
@@ -153,8 +148,7 @@ int main() {
 
   logger.setLevel(Log::LoggerInterface::DEBUG);
   logger.info("Booting ....");
-
-  // load_device_config();
+  logger.debug("Got %d memory free", FreeMem());
 
   logger.debug("Creating task scheduler");
   SimpleTaskScheduler::TaskScheduler scheduler;
@@ -163,31 +157,30 @@ int main() {
   Alive alive(LED1);
   scheduler.create_periodic_task(&alive, &Alive::indicate_living, 0.5);
 
-  SimplyLog::Log::i("Loading config ...\r\n");
-  HomeAutomator::DeviceConfiguration * deviceConfig = new HomeAutomator::DeviceConfiguration();
-  if (!deviceConfig) {
-    SimplyLog::Log::e("Could not create DeviceConfiguration, memory full\r\n");
-    exit(1);
-  }
+  logger.debug("Loading device config ...");
+  ConfigParser::FileReader reader("/local/device.jsn");
+  HomeAutomator::JsonDeviceConfigurationParser parser(&reader);
+  HomeAutomator::DeviceConfiguration *deviceConfig = parser.parse();
 
-  deviceConfig->load();
+  logger.info("ID: %s", deviceConfig->id.c_str());
+  logger.info("Description: %s", deviceConfig->description.c_str());
+  logger.info("Type: %s", deviceConfig->type.c_str());
+  logger.info("Address: %d", deviceConfig->address);
 
-  SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id().c_str());
-  SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description().c_str());
-  SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type().c_str());
-  SimplyLog::Log::i("Address: %d\r\n", deviceConfig->get_address());
+  // delete deviceConfig;
 
-  SimplyLog::Log::d("Creating router with address = %d\r\n", deviceConfig->get_address());
-  HomeAutomator::Router router(deviceConfig->get_address());
-  HomeAutomator::Communicator communicator(&router);
+  logger.debug("Creating router with address = %d", deviceConfig->address);
+  HomeAutomator::Router router(deviceConfig->address, &logger);
+  HomeAutomator::Communicator communicator(&router, &logger);
   router.set_communicator(&communicator);
 
   create_networks(&router, &scheduler);
   create_services(&communicator, &scheduler);
   create_controls(&communicator, &scheduler);
 
-  SimplyLog::Log::i("Creating continuous router task\r\n");
-  scheduler.create_continuous_task(&router, &HomeAutomator::Router::check_for_packet);
+  logger.debug("Creating continuous router task");
+  scheduler.create_continuous_task(&router, &HomeAutomator::Router::check_for_frame);
+  logger.debug("Got %d memory free", FreeMem());
 
   while(1) {
     // [TODO] Refactor:
@@ -203,13 +196,13 @@ int main() {
         } else if (x == 'r') {
             mbed_reset();
         } else if (x == 's') {
-          SimplyLog::Log::i("Network stats:\r\n%s", router.get_stats().c_str());
-          SimplyLog::Log::i("Network status:\r\n%s\r\n", router.to_string().c_str());
+          logger.info("Network stats: %s", router.get_stats().c_str());
+          logger.info("Network status: %s", router.to_string().c_str());
         } else if (x == 'c') {
-          SimplyLog::Log::i("ID: %s\r\n", deviceConfig->get_id().c_str());
-          SimplyLog::Log::i("Description: %s\r\n", deviceConfig->get_description().c_str());
-          SimplyLog::Log::i("Type: %s\r\n", deviceConfig->get_type().c_str());
-          SimplyLog::Log::i("Address: %d\r\n", deviceConfig->get_address());
+          logger.info("ID: %s", deviceConfig->id.c_str());
+          logger.info("Description: %s", deviceConfig->description.c_str());
+          logger.info("Type: %s", deviceConfig->type.c_str());
+          logger.info("Address: %d", deviceConfig->address);
         }
     }
 
