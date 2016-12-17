@@ -176,6 +176,7 @@ int main() {
   scheduler.create_continuous_task(&router, &HomeAutomator::Router::check_for_frame);
   logger.debug("Got %d memory free", FreeMem());
 
+  logger.info("Node operational");
   while(1) {
     // [TODO] Refactor:
     // This should later be refactored to a task
