@@ -1,26 +1,19 @@
 #include "mbed.h"
 #include "serial_logger.h"
-#include "LoggerInterface.h"
 
 #include "file_reader.h"
-
-#include "device_configuration.h"
 #include "json_device_configuration_parser.h"
-
-#include "endpoint_list_configuration.h"
 #include "json_control_list_configuration_parser.h"
 #include "json_client_list_configuration_parser.h"
+#include "json_network_list_configuration_parser.h"
 
 #include "task_scheduler.h"
 #include "alive.h"
 
 #include "firmware_version.h"
-#define DEBUG_MODE 1
-#include "log.h"
 
-#include "nrf24l01p_network.h"
-#include "network_configuration.h"
 #include "router.h"
+#include "communicator.h"
 
 // #include "on_off_control.h"
 // #include "electronic_gate_control.h"
@@ -28,8 +21,6 @@
 #include "client_factory.h"
 #include "control_factory.h"
 #include "network_factory.h"
-
-#include "communicator.h"
 
 extern "C" void mbed_reset();
 extern int FreeMem();
@@ -99,37 +90,42 @@ void create_controls(HomeAutomator::Communicator * communicator, SimpleTaskSched
 }
 
 void create_networks(HomeAutomator::Router * router, SimpleTaskScheduler::TaskScheduler * scheduler) {
-  HomeAutomator::NetworkConfiguration * config = new HomeAutomator::NetworkConfiguration();
-  if (!config) {
+
+  logger.debug("Loading network configs: %s", "/local/networks.jsn");
+  ConfigParser::FileReader reader("/local/networks.jsn");
+  HomeAutomator::JsonNetworkListConfigurationParser parser(&reader);
+  HomeAutomator::NetworkListConfiguration * networkConfigs = parser.parse();
+
+  if (!networkConfigs) {
     logger.error("Could not create NetworkConfiguration memory full");
     return;
   }
-  config->load();
 
-  std::vector<HomeAutomator::NetworkConfigData *> networkConfigs = config->get_network_configs();
-  for (int i = 0; i < networkConfigs.size(); i++) {
-    logger.info("Creating network of type %s with parent address = %d", networkConfigs[i]->type.c_str(), networkConfigs[i]->parentAddress);
+  for (int i = 0; i < networkConfigs->networks.size(); i++) {
+    HomeAutomator::NetworkConfiguration * netConfig = networkConfigs->networks[i];
 
-    HomeAutomator::Network * network = HomeAutomator::NetworkFactory::create(networkConfigs[i], router, &logger);
+    logger.info("Creating network of type %s with parent address = %d", netConfig->type.c_str(), netConfig->parentAddress);
+
+    HomeAutomator::Network * network = HomeAutomator::NetworkFactory::create(netConfig, router, &logger);
 
     if (!network) {
-      logger.error("Could not create %s network", networkConfigs[i]->type.c_str());
+      logger.error("Could not create %s network", netConfig->type.c_str());
     } else {
       router->attach_network(network);
-      logger.debug("%s network succesfully attached", networkConfigs[i]->type.c_str());
+      logger.debug("%s network succesfully attached", netConfig->type.c_str());
 
       // We need to create a task to do this as this should be done after
       // the network is fully set up. By retrying periodically we also
       // create simple retry mechanism.
       // TODO We should add these to a list so we can delete them later
-      if (networkConfigs[i]->parentAddress != -1) {
+      if (netConfig->parentAddress != -1) {
         logger.info("Creating periodic join request task");
         NetworkJoin * netJoin = new NetworkJoin(network);
         scheduler->create_periodic_task(netJoin, &NetworkJoin::request_network_join, 20);
       }
     }
   }
-  delete config;
+  delete networkConfigs;
 }
 
 HomeAutomator::EndPoint * get_end_point_with_id(int id) {
