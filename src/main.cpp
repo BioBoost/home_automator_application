@@ -7,8 +7,9 @@
 #include "device_configuration.h"
 #include "json_device_configuration_parser.h"
 
-#include "control_list_configuration.h"
+#include "endpoint_list_configuration.h"
 #include "json_control_list_configuration_parser.h"
+#include "json_client_list_configuration_parser.h"
 
 #include "task_scheduler.h"
 #include "alive.h"
@@ -18,9 +19,6 @@
 #include "log.h"
 
 #include "nrf24l01p_network.h"
-#include "device_configuration.h"
-#include "service_configuration.h"
-#include "control_configuration.h"
 #include "network_configuration.h"
 #include "router.h"
 
@@ -47,57 +45,57 @@ class NetworkJoin {
   public: void request_network_join(void) { this->network->request_network_join(); }
 };
 
-void create_services(HomeAutomator::Communicator * communicator, SimpleTaskScheduler::TaskScheduler * scheduler) {
-    // TODO [DUPLICATION A1A]
+HomeAutomator::EndPointListConfiguration * get_endpoint_configs(std::string configPath) {
+  logger.debug("Loading endpoint configs: %s", configPath.c_str());
+  ConfigParser::FileReader reader(configPath);
+  HomeAutomator::JsonClientListConfigurationParser parser(&reader);
+  HomeAutomator::EndPointListConfiguration * endPointConfigs = parser.parse();
 
-    HomeAutomator::ServiceConfiguration * config = new HomeAutomator::ServiceConfiguration();
-    if (!config) {
-      logger.error("Could not create ServiceConfiguration memory full");
-      return;
-    }
-    config->load();
+  if (!endPointConfigs) {
+    logger.error("Could not create endPointConfigs, memory full");
+    return NULL;
+  }
 
-    std::vector<HomeAutomator::ServiceConfigData *> serviceConfig = config->get_service_configs();
-    for (int i = 0; i < serviceConfig.size(); i++) {
-      logger.info("Creating service with id = %d, type = %s, #params: %d", serviceConfig[i]->id, serviceConfig[i]->type.c_str(), serviceConfig[i]->params.size());
-      HomeAutomator::EndPoint * service = HomeAutomator::ClientFactory::create(serviceConfig[i], communicator, &logger);
-      if (service) {
-        communicator->register_end_point(service);
-        if (service->does_it_require_periodic_update()) {
-          logger.info("Creating scheduled update task (%f s) for service with id %d", service->get_periodic_update_time(), serviceConfig[i]->id);
-          scheduler->create_periodic_task(service, &HomeAutomator::EndPoint::update, service->get_periodic_update_time());
+  return endPointConfigs;
+}
+
+void setup_endpoint(HomeAutomator::EndPoint * endpoint,
+  HomeAutomator::Communicator * communicator,
+  SimpleTaskScheduler::TaskScheduler * scheduler,
+  HomeAutomator::EndPointConfiguration * endpointConfig) {
+
+  communicator->register_end_point(endpoint);
+  if (endpoint->does_it_require_periodic_update()) {
+    logger.info("Creating scheduled update task (%f s) for endpoint with id %d", endpoint->get_periodic_update_time(), endpointConfig->id);
+    scheduler->create_periodic_task(endpoint, &HomeAutomator::EndPoint::update, endpoint->get_periodic_update_time());
+  }
+  endPoints.push_back(endpoint);   // This is just for sending command through terminal, will disappear later
+}
+
+void create_clients(HomeAutomator::Communicator * communicator, SimpleTaskScheduler::TaskScheduler * scheduler) {
+    HomeAutomator::EndPointListConfiguration * endPointConfigs = get_endpoint_configs("/local/clients.jsn");
+    if (endPointConfigs) {
+      for (int i = 0; i < endPointConfigs->endpoints.size(); i++) {
+        HomeAutomator::EndPoint * client = HomeAutomator::ClientFactory::create((HomeAutomator::ClientConfiguration*)endPointConfigs->endpoints[i], communicator, &logger);
+        if (client) {
+          setup_endpoint(client, communicator, scheduler, endPointConfigs->endpoints[i]);
         }
       }
     }
-    delete config;
+    delete endPointConfigs;
 }
 
 void create_controls(HomeAutomator::Communicator * communicator, SimpleTaskScheduler::TaskScheduler * scheduler) {
-    // TODO [DUPLICATION A1A]
-
-    logger.debug("Loading control configs ...");
-    ConfigParser::FileReader reader("/local/controls.jsn");
-    HomeAutomator::JsonControlListConfigurationParser parser(&reader);
-    HomeAutomator::ControlListConfiguration *controlConfigs = parser.parse();
-
-    if (!controlConfigs) {
-      logger.error("Could not create controlConfigs, memory full");
-      return;
-    }
-
-    for (int i = 0; i < controlConfigs->controls.size(); i++) {
-      logger.info("Creating control with id = %d, type = %s, #params: %d", controlConfigs->controls[i]->id, controlConfigs->controls[i]->type.c_str(), controlConfigs->controls[i]->params.size());
-      HomeAutomator::EndPoint * control = HomeAutomator::ControlFactory::create(controlConfigs->controls[i], communicator, &logger);
-      if (control) {
-        communicator->register_end_point(control);
-        if (control->does_it_require_periodic_update()) {
-          logger.info("Creating scheduled update task (%f s) for control with id %d", control->get_periodic_update_time(), controlConfigs->controls[i]->id);
-          scheduler->create_periodic_task(control, &HomeAutomator::EndPoint::update, control->get_periodic_update_time());
+    HomeAutomator::EndPointListConfiguration * endPointConfigs = get_endpoint_configs("/local/controls.jsn");
+    if (endPointConfigs) {
+      for (int i = 0; i < endPointConfigs->endpoints.size(); i++) {
+        HomeAutomator::EndPoint * control = HomeAutomator::ControlFactory::create((HomeAutomator::ControlConfiguration*)endPointConfigs->endpoints[i], communicator, &logger);
+        if (control) {
+          setup_endpoint(control, communicator, scheduler, endPointConfigs->endpoints[i]);
         }
-        endPoints.push_back(control);   // This is just for sending command through terminal, will disappear later
       }
     }
-    delete controlConfigs;
+    delete endPointConfigs;
 }
 
 void create_networks(HomeAutomator::Router * router, SimpleTaskScheduler::TaskScheduler * scheduler) {
@@ -160,7 +158,7 @@ int main() {
   logger.debug("Loading device config ...");
   ConfigParser::FileReader reader("/local/device.jsn");
   HomeAutomator::JsonDeviceConfigurationParser parser(&reader);
-  HomeAutomator::DeviceConfiguration *deviceConfig = parser.parse();
+  HomeAutomator::DeviceConfiguration * deviceConfig = parser.parse();
 
   logger.info("ID: %s", deviceConfig->id.c_str());
   logger.info("Description: %s", deviceConfig->description.c_str());
@@ -175,7 +173,7 @@ int main() {
   router.set_communicator(&communicator);
 
   create_networks(&router, &scheduler);
-  create_services(&communicator, &scheduler);
+  create_clients(&communicator, &scheduler);
   create_controls(&communicator, &scheduler);
 
   logger.debug("Creating continuous router task");
